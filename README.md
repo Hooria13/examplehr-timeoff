@@ -2,6 +2,8 @@
 
 A backend microservice that manages the lifecycle of employee time-off requests and keeps per-(employee, location) balances consistent with an external HCM system (Workday/SAP class).
 
+**Repository:** https://github.com/Hooria13/examplehr-timeoff
+
 **Deliverables for review:**
 
 - [`TRD.md`](./TRD.md) — Technical Requirement Document with challenges, architecture, data model, flows, alternatives-considered

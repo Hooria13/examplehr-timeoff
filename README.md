@@ -27,7 +27,7 @@ npm install
 npm test
 ```
 
-Expected: **14 suites, 102+ tests, all passing**. The suite spins up both NestJS apps in-process and exercises real HTTP traffic between them — no external dependencies required.
+Expected: **14 suites, 109 tests, all passing**. The suite spins up both NestJS apps in-process and exercises real HTTP traffic between them — no external dependencies required.
 
 ### 3. Generate a coverage report
 
@@ -133,6 +133,18 @@ All lifecycle endpoints require the headers `X-User-Id` and `X-User-Role` (`empl
 ### Balances
 
 - `GET /balances/:employeeId/:locationId` → `{ hcmBalance, pendingAtHcm, localHolds, effectiveAvailable, hcmSyncedAt, stale }`. Cold reads block on an HCM fetch; warm reads serve from the local projection; stale reads return the cached value with `stale: true` and trigger a background refresh.
+
+### Health
+
+- `GET /healthz` → `{ ok: true }` — liveness probe, no auth required.
+- `GET /readyz` → `{ ok: true, db: 'up', hcm: 'up' | 'degraded' }` — readiness probe. Reports `hcm: 'degraded'` when HCM is unreachable rather than failing entirely (TRD §8 circuit-breaker stance).
+
+### Admin (requires `X-User-Role: admin`)
+
+- `POST /admin/sync/run` — trigger reconciliation immediately
+- `POST /admin/outbox/run` — drain the outbox immediately
+- `GET /admin/sync/log?limit=…` — recent reconciliation runs
+- `GET /admin/outbox?status=…&limit=…` — inspect outbox rows, filter by status
 
 ### Time-off lifecycle
 

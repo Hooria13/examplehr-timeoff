@@ -2,7 +2,7 @@
 
 **Reproduce:** `npm run test:cov` — writes full HTML report to `./coverage/`, then open `./coverage/lcov-report/index.html`.
 
-**Last captured:** 2026-04-24 against commit on `master`. 14 suites, **102 tests**, all passing.
+**Last captured:** 2026-04-24 against commit on `master`. 14 suites, **109 tests**, all passing.
 
 ## Summary
 

@@ -82,12 +82,10 @@ describe('balances (HTTP integration, real mock-hcm)', () => {
 
   it('warm read: second call does not re-fetch from HCM', async () => {
     await request(examplehrHttp).get('/balances/e1/us').expect(200);
-    // Change HCM behind our back
     await request(mockHcmHttp)
       .post('/__test/anniversary')
       .send({ employeeId: 'e1', locationId: 'us', delta: 5 })
       .expect(200);
-    // Second read should still be 10 (warm projection, not stale yet)
     const r = await request(examplehrHttp)
       .get('/balances/e1/us')
       .expect(200);

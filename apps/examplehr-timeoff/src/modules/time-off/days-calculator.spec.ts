@@ -14,8 +14,7 @@ describe('calendarDaysInclusive', () => {
     expect(calendarDaysInclusive('2026-01-30', '2026-02-02')).toBe(4);
   });
 
-  it('handles leap-year Feb 29', () => {
-    // 2028 is a leap year
+  it('handles leap-year Feb 29 (2028 is a leap year)', () => {
     expect(calendarDaysInclusive('2028-02-28', '2028-03-01')).toBe(3);
   });
 

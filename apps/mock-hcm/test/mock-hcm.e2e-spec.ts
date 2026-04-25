@@ -102,7 +102,7 @@ describe('mock-hcm (HTTP integration)', () => {
     expect(first.body.newBalance).toBe(7);
     expect(second.body.newBalance).toBe(7);
     const after = await request(http).get('/hcm/balance/e1/us').expect(200);
-    expect(after.body.balance).toBe(7); // only one actual deduction
+    expect(after.body.balance).toBe(7);
   });
 
   it('silent-accept fault: deduct returns 201 but balance unchanged', async () => {
@@ -120,10 +120,10 @@ describe('mock-hcm (HTTP integration)', () => {
         idempotencyKey: 'k-silent',
       })
       .expect(201);
-    expect(r.body.newBalance).toBe(8); // plausible lie
+    expect(r.body.newBalance).toBe(8);
 
     const after = await request(http).get('/hcm/balance/e1/us').expect(200);
-    expect(after.body.balance).toBe(10); // truth: never deducted
+    expect(after.body.balance).toBe(10);
   });
 
   it('error500 fault clears after exhausting remainingTriggers', async () => {
@@ -142,7 +142,6 @@ describe('mock-hcm (HTTP integration)', () => {
       })
       .expect(500);
 
-    // fault exhausted; next call goes through
     await request(http)
       .post('/hcm/deduct')
       .send({
@@ -170,7 +169,7 @@ describe('mock-hcm (HTTP integration)', () => {
     const r = await request(http).get('/hcm/balance/e1/us').expect(200);
     expect(r.body.balance).toBe(15);
     const uk = await request(http).get('/hcm/balance/e1/uk').expect(200);
-    expect(uk.body.balance).toBe(4); // untouched
+    expect(uk.body.balance).toBe(4);
   });
 
   it('anniversary without locationId fans out across all locations for that employee', async () => {

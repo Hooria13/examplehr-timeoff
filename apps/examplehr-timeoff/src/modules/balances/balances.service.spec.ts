@@ -106,7 +106,7 @@ describe('BalancesService', () => {
     f.repo.findOne.mockResolvedValue(
       mkRow({ hcmSyncedAt: new Date('2026-04-24T11:30:00Z') }),
     );
-    f.advanceTime(16 * 60 * 1000); // advance 16min past sync
+    f.advanceTime(16 * 60 * 1000);
     f.hcm.getBalance.mockResolvedValue({
       employeeId: 'e1',
       locationId: 'us',
@@ -118,8 +118,7 @@ describe('BalancesService', () => {
     const r = await f.svc.getEffective('e1', 'us');
 
     expect(r.stale).toBe(true);
-    expect(r.hcmBalance).toBe(10); // stale value served
-    // background refresh was kicked off; wait a tick for it to flush
+    expect(r.hcmBalance).toBe(10);
     await new Promise((resolve) => setImmediate(resolve));
     expect(f.hcm.getBalance).toHaveBeenCalled();
   });

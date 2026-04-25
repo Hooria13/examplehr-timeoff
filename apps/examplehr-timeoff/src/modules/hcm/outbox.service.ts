@@ -8,13 +8,13 @@ import {
   TimeOffRequest,
   TimeOffStatus,
 } from '../time-off/entities/time-off-request.entity';
-import { backoffMs, nextAttemptAt } from './backoff';
+import { nextAttemptAt } from './backoff';
 import {
   HcmOutbox,
   HcmOutboxOp,
   HcmOutboxStatus,
 } from './entities/hcm-outbox.entity';
-import { HcmClient, HcmError } from './hcm.client';
+import { HcmBalanceSnapshot, HcmClient, HcmError } from './hcm.client';
 
 const DEFAULT_MAX_ATTEMPTS = 10;
 const BALANCE_EPSILON = 1e-4;
@@ -44,6 +44,11 @@ export class OutboxService {
     );
   }
 
+  /**
+   * Drain the outbox: pick up due PENDING and FAILED_RETRYABLE rows in
+   * scheduled order, dispatch each to its HCM op, and persist the result.
+   * Bounded by `limit` so a single tick can't lock the worker forever.
+   */
   async processPendingBatch(limit = 20): Promise<{ processed: number }> {
     const now = this.clock();
     const due = await this.outbox.find({
@@ -99,6 +104,20 @@ export class OutboxService {
     }
   }
 
+  /**
+   * Trust-but-verify dispatch for DEDUCT.
+   *
+   * Flow: call HCM.deduct, then re-fetch the balance and check the anchor
+   * actually moved by the requested days. Three outcomes:
+   *
+   *  - Balance moved as expected → CONFIRMED, request goes APPROVED.
+   *  - Balance unchanged → silent-accept (the brief's §3.4 failure mode).
+   *    Outbox FAILED_TERMINAL, pending_at_hcm rolled back, request
+   *    REJECTED_BY_HCM.
+   *  - Verify call itself failed → ambiguous. Outbox bumped back to
+   *    FAILED_RETRYABLE, request flagged INDETERMINATE for the batch
+   *    reconciliation to resolve from the authoritative corpus view.
+   */
   private async processDeduct(row: HcmOutbox): Promise<void> {
     const payload = row.payload as unknown as DeductPayload;
 
@@ -117,13 +136,10 @@ export class OutboxService {
       return;
     }
 
-    // Trust-but-verify: re-fetch the balance to confirm the deduction landed.
-    let verify;
+    let verify: HcmBalanceSnapshot;
     try {
       verify = await this.hcm.getBalance(payload.employeeId, payload.locationId);
     } catch (err) {
-      // Ambiguous: can't confirm. Route through INDETERMINATE for
-      // batch reconciliation to resolve deterministically.
       await this.markIndeterminate(row, err instanceof Error ? err.message : String(err));
       return;
     }
@@ -142,14 +158,10 @@ export class OutboxService {
       return;
     }
 
-    // Expected HCM balance after a successful deduct:
-    // previous local anchor (balance.hcmBalance) minus payload.days.
     const expected = balance.hcmBalance - payload.days;
     if (Math.abs(verify.balance - expected) < BALANCE_EPSILON) {
       await this.confirmDeduct(row, verify.balance, payload);
     } else {
-      // HCM accepted the request but the balance did not move as expected.
-      // This is the silent-accept failure from the brief §3.4.
       this.logger.warn(
         `silent-accept detected for ${payload.idempotencyKey}: ` +
           `expected=${expected}, got=${verify.balance}`,
@@ -165,6 +177,11 @@ export class OutboxService {
     }
   }
 
+  /**
+   * REVERSE companion to processDeduct. On confirmed reverse, transitions a
+   * CANCELLATION_REQUESTED request to CANCELLED and writes the authoritative
+   * balance back from HCM.
+   */
   private async processReverse(row: HcmOutbox): Promise<void> {
     const payload = row.payload as unknown as DeductPayload;
 
@@ -183,7 +200,7 @@ export class OutboxService {
       return;
     }
 
-    let verify;
+    let verify: HcmBalanceSnapshot;
     try {
       verify = await this.hcm.getBalance(payload.employeeId, payload.locationId);
     } catch (err) {
@@ -246,8 +263,6 @@ export class OutboxService {
           req.status = TimeOffStatus.APPROVED;
           await em.save(TimeOffRequest, req);
         }
-        // If request is CANCELLATION_REQUESTED (cancel-during-approving race),
-        // leave it — REVERSE will finish the transition to CANCELLED.
       }
 
       const fresh = await em.findOneOrFail(HcmOutbox, { where: { id: row.id } });
@@ -343,6 +358,3 @@ export class OutboxService {
     });
   }
 }
-
-// Silence unused-import warning for imports that remain referenced via types.
-void backoffMs;

@@ -121,6 +121,11 @@ export class HcmClient {
     }
   }
 
+  /**
+   * Translate an axios failure into an HcmError that carries a retry hint.
+   * 5xx, 429, and network/timeout failures are retryable. 4xx business
+   * rejections (insufficient balance, unknown employee/location) are not.
+   */
   private wrap(err: unknown): HcmError {
     if (err && typeof err === 'object' && 'isAxiosError' in err) {
       const ax = err as AxiosError;
@@ -130,7 +135,6 @@ export class HcmClient {
         typeof body === 'object' && body && 'message' in body
           ? String((body as { message: unknown }).message)
           : ax.message;
-      // 5xx, 429, and network/timeout are retryable; 4xx business errors are not.
       const isRetryable =
         status === 0 || status === 429 || (status >= 500 && status < 600);
       this.logger.warn(`HCM call failed status=${status} msg=${msg}`);

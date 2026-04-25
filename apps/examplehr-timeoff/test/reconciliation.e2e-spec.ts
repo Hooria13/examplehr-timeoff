@@ -89,10 +89,8 @@ describe('reconciliation cron (HTTP integration, real mock-hcm)', () => {
   });
 
   it('detects and applies drift from independent HCM update', async () => {
-    // Warm the local projection first
     await request(hrHttp).get(`/balances/${EMP}/${LOC}`).expect(200);
 
-    // HCM changes independently
     await request(mockHcmHttp)
       .post('/__test/anniversary')
       .send({ employeeId: EMP, locationId: LOC, delta: 5 })
@@ -106,7 +104,6 @@ describe('reconciliation cron (HTTP integration, real mock-hcm)', () => {
   });
 
   it('skips keys with in-flight outbox ops, counts them separately', async () => {
-    // Warm projection and submit+approve (leaves DEDUCT pending)
     await request(hrHttp).get(`/balances/${EMP}/${LOC}`).expect(200);
     const sub = await request(hrHttp)
       .post('/time-off/requests')
@@ -124,7 +121,6 @@ describe('reconciliation cron (HTTP integration, real mock-hcm)', () => {
       .send({})
       .expect(201);
 
-    // HCM independently drops the balance mid-approval
     await request(mockHcmHttp)
       .post('/__test/anniversary')
       .send({ employeeId: EMP, locationId: LOC, delta: -3 })
@@ -133,10 +129,8 @@ describe('reconciliation cron (HTTP integration, real mock-hcm)', () => {
     const result = await reconciliation.runSync();
     expect(result.skippedInFlight).toBe(1);
 
-    // us key should still show the pre-drift balance (10), not 7
     const bal = await request(hrHttp).get(`/balances/${EMP}/${LOC}`).expect(200);
     expect(bal.body.hcmBalance).toBe(10);
-    // uk key had no in-flight op, so it would have reconciled normally
     const ukBal = await request(hrHttp).get(`/balances/${EMP}/uk`).expect(200);
     expect(ukBal.body.hcmBalance).toBe(4);
   });
@@ -153,7 +147,6 @@ describe('reconciliation cron (HTTP integration, real mock-hcm)', () => {
   });
 
   it('marks sync log FAILED when HCM batch throws', async () => {
-    // Fault the batch endpoint indefinitely
     await request(mockHcmHttp)
       .post('/__test/fault')
       .send({ op: 'batch', mode: 'error500' })

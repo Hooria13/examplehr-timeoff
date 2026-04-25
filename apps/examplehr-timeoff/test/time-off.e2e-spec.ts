@@ -110,7 +110,7 @@ describe('time-off state machine (HTTP integration, real mock-hcm)', () => {
   });
 
   it('submit rejects with 409 when balance insufficient', async () => {
-    const r = await submit({ startDate: '2026-05-01', endDate: '2026-05-15' }); // 15 days > 10
+    const r = await submit({ startDate: '2026-05-01', endDate: '2026-05-15' });
     expect(r.status).toBe(409);
   });
 
@@ -156,9 +156,8 @@ describe('time-off state machine (HTTP integration, real mock-hcm)', () => {
     const { body: submitted } = await submit({
       startDate: '2026-05-01',
       endDate: '2026-05-05',
-    }).expect(201); // 5 days reserved, HCM=10 so avail=5
+    }).expect(201);
 
-    // HCM independently drops balance to 3 (below this request's 5 days)
     await request(mockHcmHttp)
       .post('/__test/anniversary')
       .send({ employeeId: EMP, locationId: LOC, delta: -7 })
@@ -194,7 +193,6 @@ describe('time-off state machine (HTTP integration, real mock-hcm)', () => {
       .expect(201);
     expect(second.body.status).toBe('APPROVING');
 
-    // Balance should have been mutated exactly once
     const bal = await getBalance();
     expect(bal.pendingAtHcm).toBe(2);
   });
@@ -252,7 +250,6 @@ describe('time-off state machine (HTTP integration, real mock-hcm)', () => {
 
     expect(cancelled.status).toBe('CANCELLATION_REQUESTED');
     const bal = await getBalance();
-    // pending stays until the REVERSE outbox op confirms
     expect(bal.pendingAtHcm).toBe(2);
   });
 

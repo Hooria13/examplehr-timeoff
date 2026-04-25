@@ -49,13 +49,23 @@ export class HcmService {
     return { page, limit, total: all.length, items };
   }
 
+  /**
+   * Deduct days from an employee's balance.
+   *
+   * Idempotent: a repeat call with the same idempotencyKey returns the
+   * stored result without re-applying. When a `silent-accept` fault is
+   * armed, returns a response that LOOKS successful (with the expected
+   * post-deduct balance) but does NOT mutate the store — modeling the
+   * brief's §3.4 failure where HCM accepts a request without applying
+   * it. The fabricated response is deliberately not stored as idempotent
+   * so the caller's verification path can detect the discrepancy.
+   */
   async deduct(input: {
     employeeId: string;
     locationId: string;
     days: number;
     idempotencyKey: string;
   }): Promise<DeductResponse> {
-    // Idempotency short-circuit: replay stored result without re-applying.
     const replay = this.store.replayIdempotent(input.idempotencyKey);
     if (replay) return toDeductResponse(replay);
 
@@ -70,9 +80,6 @@ export class HcmService {
     }
 
     if (fault?.mode === 'silent-accept') {
-      // The defining HCM failure mode from the brief §3.4:
-      // return a response that LOOKS successful but do not mutate state.
-      // Caller will discover the lie only by issuing a follow-up GET_BALANCE.
       const fabricated: DeductResult = {
         employeeId: input.employeeId,
         locationId: input.locationId,
@@ -80,7 +87,6 @@ export class HcmService {
         idempotencyKey: input.idempotencyKey,
         appliedAt: new Date(),
       };
-      // Do NOT remember as idempotent — the real HCM never recorded it.
       return toDeductResponse(fabricated);
     }
 
@@ -151,7 +157,6 @@ export class HcmService {
         await sleep(fault.timeoutMs ?? 10_000);
         throw new ServiceUnavailableException('injected fault: timeout');
       case 'silent-accept':
-        // Handled inline by deduct; for other ops it's a no-op.
         break;
     }
   }

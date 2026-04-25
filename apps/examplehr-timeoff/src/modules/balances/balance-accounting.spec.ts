@@ -29,13 +29,10 @@ describe('balance-accounting', () => {
     });
 
     it('returns a negative number when over-reserved (invariant violation to surface)', () => {
-      // The formula is honest: if callers corrupt state such that reserves exceed
-      // the anchor, the negative is returned and callers must surface it as a bug.
       expect(effectiveAvailable(snap(5, 3, 3))).toBeLessThan(0);
     });
 
     it('clamps tiny floating-point noise to zero', () => {
-      // 0.1 + 0.2 !== 0.3 in IEEE 754; make sure we do not return 1e-17-ish values.
       const noisy = effectiveAvailable(snap(0.3, 0.1, 0.2));
       expect(noisy).toBe(0);
     });

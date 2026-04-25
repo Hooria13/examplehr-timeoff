@@ -15,6 +15,12 @@ export class HealthController {
     return { ok: true };
   }
 
+  /**
+   * Readiness probe. Fails (503) if the local DB is unreachable, since
+   * we can't serve any meaningful response without it. HCM being down
+   * downgrades to `hcm: 'degraded'` rather than failing — the app stays
+   * useful via the local projection and outbox per TRD §8.
+   */
   @Get('readyz')
   async readyz(): Promise<{
     ok: true;
@@ -32,9 +38,6 @@ export class HealthController {
     try {
       await this.hcm.getBatch(0, 1);
     } catch (err) {
-      // HCM downtime is degraded, not fatal — the app remains useful via the
-      // local projection and outbox. We surface this as 'degraded' rather
-      // than failing readyz entirely (TRD §8 — circuit-breaker stance).
       if (err instanceof HcmError) hcm = 'degraded';
       else throw err;
     }

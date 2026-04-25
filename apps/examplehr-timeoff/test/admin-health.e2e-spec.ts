@@ -100,7 +100,6 @@ describe('admin + health endpoints (HTTP integration)', () => {
   });
 
   it('POST /admin/outbox/run drains the outbox', async () => {
-    // Set up a pending outbox row by submitting + approving
     const sub = await request(hrHttp)
       .post('/time-off/requests')
       .set(EMP)

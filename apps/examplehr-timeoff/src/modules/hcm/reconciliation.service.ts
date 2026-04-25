@@ -44,6 +44,15 @@ export class ReconciliationService {
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
+  /**
+   * Pull HCM's full balance corpus and reconcile it against the local
+   * projection. Keys with an in-flight outbox op are deliberately skipped:
+   * the outbox loop is mid-mutation for those, and overwriting their
+   * hcmBalance here would clobber the pending_at_hcm accounting.
+   *
+   * Each run writes an HcmSyncLog row with drift counts and the list of
+   * skipped keys for operator visibility.
+   */
   async runSync(): Promise<SyncRunResult> {
     const log = await this.syncLog.save(
       this.syncLog.create({
@@ -84,7 +93,6 @@ export class ReconciliationService {
               locationId: item.locationId,
               reason: 'in-flight outbox op; deferring overwrite',
             });
-            // Update only the sync timestamp, not the value.
             await this.balances.update(
               { employeeId: item.employeeId, locationId: item.locationId },
               { hcmSyncedAt: this.clock() },
@@ -133,7 +141,6 @@ export class ReconciliationService {
         }
       }
 
-      // Resolve any INDETERMINATE requests whose balances we just reconciled.
       await this.resolveIndeterminate();
 
       log.status = HcmSyncStatus.COMPLETED;
@@ -153,21 +160,22 @@ export class ReconciliationService {
     }
   }
 
+  /**
+   * Surface INDETERMINATE requests for operator inspection rather than
+   * auto-resolving. Auto-resolution would require knowing whether the
+   * earlier deduct landed or not, and the whole point of INDETERMINATE
+   * is that we can't tell from this side.
+   */
   private async resolveIndeterminate(): Promise<void> {
     const stuck = await this.dataSource
       .getRepository(TimeOffRequest)
       .find({ where: { status: TimeOffStatus.INDETERMINATE } });
 
     for (const req of stuck) {
-      // After reconciliation, balance is authoritative. If pendingAtHcm
-      // still reflects this request's days, assume HCM accepted — mark
-      // APPROVED (happy) or CANCELLED (if cancel was requested).
-      // If not, the outbox will retry; we leave INDETERMINATE for now.
       this.logger.warn(
         `INDETERMINATE request ${req.id} detected during reconciliation; ` +
           `manual inspection recommended`,
       );
-      // Conservative default: do not auto-resolve here. Operator-visible state.
     }
   }
 }

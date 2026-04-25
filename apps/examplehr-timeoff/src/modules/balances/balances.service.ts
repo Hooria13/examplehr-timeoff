@@ -30,6 +30,13 @@ export class BalancesService {
     );
   }
 
+  /**
+   * Resolve the balance for a key. On a cold read with no local projection,
+   * blocks on a synchronous HCM fetch — returning an unknown number to the UI
+   * would be worse than a transient 503. On a warm-but-stale read, serves the
+   * cached value with stale=true and kicks off a background refresh so the
+   * next request is fresh.
+   */
   async getEffective(
     employeeId: string,
     locationId: string,
@@ -37,13 +44,10 @@ export class BalancesService {
     let row = await this.repo.findOne({ where: { employeeId, locationId } });
 
     if (!row) {
-      // Cold read: no local projection. Must fetch from HCM synchronously
-      // — returning an unknown balance to the UI is worse than failing.
       try {
         row = await this.refreshFromHcm(employeeId, locationId);
       } catch (err) {
         if (err instanceof HcmError && err.status === 404) {
-          // HCM has no record either — propagate as 404-ish.
           throw err;
         }
         this.logger.error(
@@ -54,7 +58,6 @@ export class BalancesService {
         );
       }
     } else if (this.isStale(row)) {
-      // Warm read with stale projection: serve stale, refresh in the background.
       void this.refreshFromHcm(employeeId, locationId).catch((err) => {
         this.logger.warn(
           `background refresh failed for ${employeeId}/${locationId}: ${String(err)}`,
@@ -65,6 +68,10 @@ export class BalancesService {
     return this.toResponse(row!);
   }
 
+  /**
+   * Pull a fresh anchor from HCM and persist it. Used by both the cold-read
+   * path here and the write-path freshness check in TimeOffService.approve.
+   */
   async refreshFromHcm(
     employeeId: string,
     locationId: string,

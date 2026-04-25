@@ -73,7 +73,7 @@ describe('HcmService', () => {
         idempotencyKey: 'k1',
       });
       expect(second.newBalance).toBe(7);
-      expect(store.get('e1', 'us')!.balance).toBe(7); // only decremented once
+      expect(store.get('e1', 'us')!.balance).toBe(7);
     });
 
     it('rejects with 409 on insufficient balance', async () => {
@@ -107,10 +107,8 @@ describe('HcmService', () => {
         days: 2,
         idempotencyKey: 'k-silent',
       });
-      expect(r.newBalance).toBe(8); // plausible-looking response
-      expect(store.get('e1', 'us')!.balance).toBe(10); // but store is UNCHANGED
-      // and critically: no idempotency record — a retry would re-silent-accept,
-      // not return the cached lie.
+      expect(r.newBalance).toBe(8);
+      expect(store.get('e1', 'us')!.balance).toBe(10);
     });
 
     it('error500 fault does not mutate state', async () => {

@@ -17,7 +17,6 @@ import {
   HcmOutboxOp,
   HcmOutboxStatus,
 } from '../hcm/entities/hcm-outbox.entity';
-import { HcmClient, HcmError } from '../hcm/hcm.client';
 import { calendarDaysInclusive, datesOverlap } from './days-calculator';
 import {
   TimeOffRequest,
@@ -41,10 +40,15 @@ export class TimeOffService {
     @InjectRepository(TimeOffRequest)
     private readonly requests: Repository<TimeOffRequest>,
     private readonly balances: BalancesService,
-    private readonly hcm: HcmClient,
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
+  /**
+   * Reserve days for a new request. Refreshes the local HCM anchor first
+   * (outside the transaction, since it's an outbound HTTP call), then under
+   * a single transaction it checks effective_available, inserts the request
+   * row, and bumps local_holds atomically.
+   */
   async submit(
     dto: SubmitRequestDto,
     actorId: string,
@@ -61,8 +65,6 @@ export class TimeOffService {
       throw new BadRequestException('request must span at least one day');
     }
 
-    // Ensure a local balance anchor exists. Cold-fetches from HCM if needed.
-    // Done outside the transaction because it performs an outbound HTTP call.
     await this.balances.refreshFromHcm(dto.employeeId, dto.locationId);
 
     await this.assertNoOverlap(
@@ -76,8 +78,6 @@ export class TimeOffService {
         where: { employeeId: dto.employeeId, locationId: dto.locationId },
       });
       if (!balance) {
-        // refreshFromHcm should have created it; if we get here something
-        // raced; treat as a server error rather than silently 0-reserving.
         throw new ConflictException('balance anchor missing after refresh');
       }
 
@@ -111,6 +111,13 @@ export class TimeOffService {
     });
   }
 
+  /**
+   * Manager-decides-yes path. Re-fetches HCM live before deciding (write-path
+   * freshness, TRD §7.2) so an anniversary or out-of-band deduction that
+   * happened since submit is caught and auto-rejects via REJECTED_BY_HCM.
+   * Idempotent — calling approve on a non-SUBMITTED request returns its
+   * current state without re-mutating balance or re-enqueuing the outbox.
+   */
   async approve(
     id: string,
     actorId: string,
@@ -118,12 +125,10 @@ export class TimeOffService {
   ): Promise<TimeOffRequestDto> {
     const request = await this.requireRequest(id);
 
-    // Idempotency: if already past SUBMITTED, return current state.
     if (request.status !== TimeOffStatus.SUBMITTED) {
       return toDto(request);
     }
 
-    // Write-path freshness: re-anchor from HCM before deciding.
     try {
       await this.balances.refreshFromHcm(
         request.employeeId,
@@ -133,7 +138,6 @@ export class TimeOffService {
       this.logger.warn(
         `approve: HCM refresh failed, proceeding in degraded mode: ${String(err)}`,
       );
-      // Degraded mode per TRD §8 — proceed with the local anchor.
     }
 
     return this.dataSource.transaction(async (em) => {
@@ -153,13 +157,7 @@ export class TimeOffService {
         localHolds: balance.localHolds,
       });
 
-      // local_holds already includes this request's days, so the comparison
-      // is: does the raw HCM anchor still cover everything including this one?
-      // avail represents what's left AFTER reserving this request's days.
       if (avail < 0) {
-        // HCM dropped the anchor below our reservations. Auto-reject THIS
-        // request (the oldest-in-the-money simplification: we reject the one
-        // being approved; cannot re-order).
         fresh.status = TimeOffStatus.REJECTED_BY_HCM;
         fresh.decidedBy = actorId;
         fresh.decisionNotes =
@@ -170,7 +168,6 @@ export class TimeOffService {
         return toDto(fresh);
       }
 
-      // Happy path: move from local_holds to pending_at_hcm, enqueue DEDUCT.
       balance.localHolds = balance.localHolds - fresh.days;
       balance.pendingAtHcm = balance.pendingAtHcm + fresh.days;
 
@@ -200,6 +197,7 @@ export class TimeOffService {
     });
   }
 
+  /** Manager-decides-no path. Releases the local hold; HCM is never told. */
   async reject(
     id: string,
     actorId: string,
@@ -235,6 +233,12 @@ export class TimeOffService {
     });
   }
 
+  /**
+   * Cancel branches on whether HCM has been told yet. Pre-approval is a clean
+   * release of local_holds. Post-approval enqueues a REVERSE outbox op and
+   * leaves pending_at_hcm in place — only flipping to CANCELLED once the
+   * outbox confirms HCM applied the reversal.
+   */
   async cancel(id: string, actorId: string): Promise<TimeOffRequestDto> {
     const request = await this.requireRequest(id);
 
@@ -260,7 +264,6 @@ export class TimeOffService {
       });
 
       if (fresh.status === TimeOffStatus.SUBMITTED) {
-        // Pre-approval cancel: release holds, terminal.
         fresh.status = TimeOffStatus.CANCELLED;
         fresh.decidedBy = actorId;
         balance.localHolds = balance.localHolds - fresh.days;
@@ -273,7 +276,6 @@ export class TimeOffService {
         fresh.status === TimeOffStatus.APPROVING ||
         fresh.status === TimeOffStatus.APPROVED
       ) {
-        // Post-approval cancel: enqueue REVERSE; keep pending_at_hcm until confirmed.
         fresh.status = TimeOffStatus.CANCELLATION_REQUESTED;
         fresh.decidedBy = actorId;
 
@@ -296,7 +298,6 @@ export class TimeOffService {
         return toDto(fresh);
       }
 
-      // CANCELLATION_REQUESTED or INDETERMINATE: idempotent no-op
       return toDto(fresh);
     });
   }
@@ -355,6 +356,3 @@ function toDto(r: TimeOffRequest): TimeOffRequestDto {
     updatedAt: r.updatedAt?.toISOString?.() ?? String(r.updatedAt),
   };
 }
-
-// Silence unused-import warning from HcmError; kept imported for future use.
-export type _HcmErrorForDoc = HcmError;

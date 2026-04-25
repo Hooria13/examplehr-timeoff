@@ -152,8 +152,8 @@ describe('outbox worker (HTTP integration, real mock-hcm)', () => {
     expect(req.status).toBe('REJECTED_BY_HCM');
 
     const bal = await getBalance();
-    expect(bal.hcmBalance).toBe(10); // unchanged — HCM never actually deducted
-    expect(bal.pendingAtHcm).toBe(0); // rolled back
+    expect(bal.hcmBalance).toBe(10);
+    expect(bal.pendingAtHcm).toBe(0);
     expect(bal.effectiveAvailable).toBe(10);
 
     const outboxRows = await getOutboxRow(reqId);
@@ -169,13 +169,11 @@ describe('outbox worker (HTTP integration, real mock-hcm)', () => {
 
     const reqId = await submitAndApprove('2026-05-01', '2026-05-02');
 
-    // First tick: hits the fault, outbox row becomes FAILED_RETRYABLE
     await outbox.processPendingBatch();
     let rows = await getOutboxRow(reqId);
     expect(rows[0].status).toBe('FAILED_RETRYABLE');
     expect(rows[0].attempts).toBe(1);
 
-    // Second tick — but next_attempt_at is 1s in the future. Expedite.
     await expediteOutbox();
     await outbox.processPendingBatch();
 
@@ -189,7 +187,6 @@ describe('outbox worker (HTTP integration, real mock-hcm)', () => {
   });
 
   it('DEDUCT hits max attempts: outbox FAILED_TERMINAL, request REJECTED_BY_HCM, pending released', async () => {
-    // Unlimited error500 (no remainingTriggers) causes every attempt to fail.
     await request(mockHcmHttp)
       .post('/__test/fault')
       .send({ op: 'deduct', mode: 'error500' })
@@ -197,7 +194,6 @@ describe('outbox worker (HTTP integration, real mock-hcm)', () => {
 
     const reqId = await submitAndApprove('2026-05-01', '2026-05-02');
 
-    // OUTBOX_MAX_ATTEMPTS=3, so tick 3 times with expediting in between.
     for (let i = 0; i < 3; i++) {
       await expediteOutbox();
       await outbox.processPendingBatch();
@@ -216,27 +212,23 @@ describe('outbox worker (HTTP integration, real mock-hcm)', () => {
   });
 
   it('DEDUCT business rejection (insufficient at HCM): terminal on first try', async () => {
-    // Drop HCM balance below what we reserved.
-    await submitAndApprove('2026-05-01', '2026-05-03'); // reserves 3 days
+    await submitAndApprove('2026-05-01', '2026-05-03');
     await request(mockHcmHttp)
       .post('/__test/anniversary')
       .send({ employeeId: EMP, locationId: LOC, delta: -9 })
       .expect(200);
-    // Mock-HCM now shows 1 day; our deduct of 3 will get 409 (non-retryable).
 
     await outbox.processPendingBatch();
 
     const rows = await ds.query('SELECT * FROM hcm_outbox');
     expect(rows[0].status).toBe('FAILED_TERMINAL');
-    expect(rows[0].attempts).toBe(1); // no retry for 4xx
+    expect(rows[0].attempts).toBe(1);
   });
 
   it('REVERSE happy path: CANCELLATION_REQUESTED -> CANCELLED, balance restored', async () => {
     const reqId = await submitAndApprove('2026-05-01', '2026-05-02');
-    // Run DEDUCT to completion
     await outbox.processPendingBatch();
 
-    // Cancel post-approval
     await request(hrHttp)
       .post(`/time-off/requests/${reqId}/cancel`)
       .set(EMP_HEADERS)
@@ -245,7 +237,6 @@ describe('outbox worker (HTTP integration, real mock-hcm)', () => {
     let req = await getRequest(reqId);
     expect(req.status).toBe('CANCELLATION_REQUESTED');
 
-    // Run REVERSE outbox op
     await expediteOutbox();
     await outbox.processPendingBatch();
 
@@ -253,7 +244,7 @@ describe('outbox worker (HTTP integration, real mock-hcm)', () => {
     expect(req.status).toBe('CANCELLED');
 
     const bal = await getBalance();
-    expect(bal.hcmBalance).toBe(10); // restored
+    expect(bal.hcmBalance).toBe(10);
     expect(bal.pendingAtHcm).toBe(0);
 
     const outboxRows = await getOutboxRow(reqId);
@@ -266,7 +257,7 @@ describe('outbox worker (HTTP integration, real mock-hcm)', () => {
     await outbox.processPendingBatch();
 
     const bal1 = await getBalance();
-    await outbox.processPendingBatch(); // nothing to do, status=CONFIRMED
+    await outbox.processPendingBatch();
     const bal2 = await getBalance();
     expect(bal2.hcmBalance).toBe(bal1.hcmBalance);
   });
